@@ -1,9 +1,9 @@
 #include <math.h>
 #include <time.h>
 #include <stdbool.h>
-const int PPR = 4,FAN_SIG = 6, int FAN_READ = 3; //Pulse per revolution is 4 for the NOCTUA NF-AF12 PPC2000, PIN 6allocated for PWM output, PIN 3 allocated for the fan speed RPM PWM Signal
+const int PPR = 4,FAN_SIG = 6, FAN_READ = 3, POT_PIN = 1; //Pulse per revolution is 4 for the NOCTUA NF-AF12 PPC2000, PIN 6allocated for PWM output, PIN 3 allocated for the fan speed RPM PWM Signal
 int num_readings = 100,read_index=0, print_interval = 1000; //number of readings for RPM, read_idx and how long between each print
-volatile int count=-1, CurrentTime, LastTime, AskTime; //since these values are always changing, we assign volatile
+volatile unsigned long count=-1, CurrentTime=0, LastTime=0, AskTime=0; //since these values are always changing, we assign volatile
 unsigned long duration;
 double total, average, RPM, readings[100];
 bool exceeded = false, asking = true, done = false;;
@@ -16,10 +16,9 @@ void Pulse_Event(){
 void setup() {
   // put your setup code here, to run once:
   pinMode(FAN_SIG, OUTPUT);
-  pinMode(FAN_READ, INPUT_PULLUP);
+  pinMode(FAN_READ, INPUT);
   attachInterrupt(digitalPinToInterrupt(FAN_READ), Pulse_Event, RISING);
   Serial.begin(9600);
-  Serial.println("Simply enter your desired RPM at any point...");
   delay(1000);
   AskTime = millis();
   LastTime = micros();
@@ -31,7 +30,7 @@ void loop() {
   analogWrite(FAN_SIG, val); //here we write the mapped value from the potentiometer to the PWM signal of the fan
   noInterrupts();
   int localcount = count;
-  double localtime = CurrentTime;
+  unsigned long localtime = CurrentTime;
   interrupts();
   if (localcount >= PPR && localtime>LastTime){ //if we hit count == PPR, means that one revolution has passed. We also check that our duratin is valid.
     duration = localtime-LastTime; //this is the time taken for 1 revolution in microseconds
@@ -58,7 +57,7 @@ void loop() {
       Serial.print(average);
       Serial.print("RPM And airflow is approximately ");
       Serial.print(average*71.69/2000);
-      Serial.print(" CFM");
+      Serial.println(" CFM");
     }
   }
 
