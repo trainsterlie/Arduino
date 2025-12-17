@@ -10,43 +10,43 @@ double total, average, RPM, readings[100];
 bool exceeded = false, asking = true, done = false, timeout = false;
 String input;
 
-void Pulse_Event(){
-  unsigned long now = micros();
-  FirstPulse = now;
-  if (FirstPulse - LastPulse > 10000){
+void Pulse_Event(){ //Here we define Pulse_event. This event(function) is triggered whenever FAN_READ receives a signal and it is FALLING. In our fan case this means falling from Vhigh to Vlow of the tach signal
+  unsigned long now = micros(); //here we define current time in micros as now
+  FirstPulse = now; 
+  if (FirstPulse - LastPulse > 10000){ //since our duration will always be above a certain number (in this case we define 10000 micros) we filter out unwanted signals that are outside of this zone
     duration = FirstPulse-LastPulse; //time taken for one pulse
-    done = true;
+    done = true; //flag done as true here to indicate to our main loop that there is a new value of duration to update a new value of RPM. This is in case our main loop updates before our ISR does(unlikely since freq of tach is q high)
   }
-  LastPulse = FirstPulse;
+  LastPulse = FirstPulse; 
 }
 void setup() {
-    InitTimersSafe();
-    bool success = SetPinFrequencySafe(FAN_SIG, 25000);
-
-    pinMode(FAN_SIG, OUTPUT); 
-    
-  for (int i =0;i<num_readings;i++){
+  InitTimersSafe(); //part of PWM library idk wtf it does
+  if (!SetPinFrequencySafe(FAN_SIG, 25000)){ //this function SetPinFrequencySafe returns a bool value if it has succesfully initialised or not
+    return 0;
+  }; //
+  pinMode(FAN_SIG, OUTPUT); //set FAN_SIG as pwm output
+  for (int i =0;i<num_readings;i++){ 
     readings[i] = 0;
     //clear the array
   }
-  pinMode(FAN_READ, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(FAN_READ), Pulse_Event, FALLING);
+  pinMode(FAN_READ, INPUT_PULLUP); //set pinmode of FAN_READ, tach pwm input
+  attachInterrupt(digitalPinToInterrupt(FAN_READ), Pulse_Event, FALLING); //here we define our Interrupt routine, basically pulseIn on steroids
   Serial.begin(9600);
   delay(1000);
-  AskTime = millis();
+  AskTime = millis(); 
 }
 
 void loop() {
   // put your main code here, to run repeatedly
-  int val = map(analogRead(POT_PIN), 0, 1023, 0, 255); //here we map the analogRead min-max of 0-1023 to analogWrite range of 0-255 //here we write the mapped value from the potentiometer to the PWM signal of the fan
-  pwmWrite(FAN_SIG, val);
-  Serial.println(duration);
-  if (micros() - LastPulse > TIMEOUT && !timeout){
-    for (int u =0; u<num_readings;u++){
-      readings[u] = 0;
+  int val = map(analogRead(POT_PIN), 0, 1023, 0, 255); //here we map the analogRead min-max of 0-1023 to analogWrite range of 0-255 and  we write the mapped value from the potentiometer to the PWM signal of the fan
+  pwmWrite(FAN_SIG, val); //part of PWM library, in this case val is the duty cycle
+  Serial.println(duration); //part of debug where we print out the duration
+  if (micros() - LastPulse > TIMEOUT && !timeout){ //if time between lastpulse and now is more than our user-defined TIMEOUT value AND timeout is not already true
+    for (int u=0;u<num_readings;u++){
+      readings[u] = 0; //reset the array to 0 again
     }
-    done=false;
-    timeout = true;
+    done=false; //done flag = false
+    timeout = true; //timeout flag = true
   }
   if (done){ //wait for ISR to update value
     noInterrupts();
