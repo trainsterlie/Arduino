@@ -42,11 +42,10 @@ void loop() {
   pwmWrite(FAN_SIG, val); //part of PWM library, in this case val is the duty cycle
   Serial.println(duration); //part of debug where we print out the duration
   if (micros() - LastPulse > TIMEOUT && !timeout){ //if time between lastpulse and now is more than our user-defined TIMEOUT value AND timeout is not already true
-    for (int u=0;u<num_readings;u++){
-      readings[u] = 0; //reset the array to 0 again
+      readings[u] = 0; //reset
     }
-    done=false; //done flag = false
-    timeout = true; //timeout flag = true
+    done=false;
+    timeout = true;
   }
   if (done){ //wait for ISR to update value
     noInterrupts();
