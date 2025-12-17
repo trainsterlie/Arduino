@@ -44,7 +44,7 @@ void ISR_pulseIn(){
   unsigned long curr = micros();
   if(curr - pulse_tmstp > 10000){
     cnt++;
-    tmstp = curr;
+    pulse_tmstp = curr;
   }
 }
 void setup() {
