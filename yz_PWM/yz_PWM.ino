@@ -54,7 +54,7 @@ void setup() {
   pinMode(fan_pwm, OUTPUT); 
   pinMode(fan_tach, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(fan_tach), ISR_pulseIn, FALLING);
-  Serial.begin(9600);
+  Serial.begin(9600); 
 }
 
 void loop() {
