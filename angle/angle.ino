@@ -1,8 +1,4 @@
-#include <math.h>
-#include <time.h>
-#include <stdbool.h>
 #include <Servo.h>
-#include <stdlib.h>
 String angleS;
 Servo angle_servo;
 const int SERVO_PIN = 5, START_ANGLE = 60, MAX_ANGLE, POT_PIN =A1, max_reading = 200; 

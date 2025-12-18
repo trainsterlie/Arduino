@@ -1,5 +1,4 @@
 #include <PWM.h>
-
 /*
  * Pulse per revolution is 2 for the NOCTUA NF-AF12 PPC2000, PIN 6allocated for PWM output, PIN 3 allocated for the fan speed RPM PWM Signal
  * 
@@ -42,7 +41,7 @@ float rpm = 0;
  */
 void ISR_pulseIn(){
   unsigned long curr = micros();
-  if(curr - pulse_tmstp > 10000){
+  if(curr - pulse_tmstp > 5000){
     cnt++;
     pulse_tmstp = curr;
   }
@@ -54,7 +53,7 @@ void setup() {
   pinMode(fan_pwm, OUTPUT); 
   pinMode(fan_tach, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(fan_tach), ISR_pulseIn, FALLING);
-  Serial.begin(9600); 
+  Serial.begin(9600);
 }
 
 void loop() {
@@ -63,19 +62,21 @@ void loop() {
   pwmWrite(fan_pwm, pwm);
 
   unsigned long now = millis();
+  unsigned long elapsed = now - window_tmstp;
 
   /* Sampling window: 500ms (2hz) */
-  if(now - window_tmstp > 500){
+  if(elapsed > 500){
     /* Disable interrupts */
     cli();
-
-    /* Compute rpm & print */
-    rpm = cnt / (ppr * (now - window_tmstp)) * 60000.0f;
-    Serial.println(rpm, 3);
-    window_tmstp = now;
+    uint32_t cnt_cache = cnt;
     cnt = 0;
 
     /* Enable interrupts */
     sei();
+
+    /* Compute rpm & print */
+    rpm = (60000.0f * cnt_cache) / (ppr * elapsed) ;
+    Serial.println(rpm, 3);
+    window_tmstp = now;
   }
 } 
