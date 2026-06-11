@@ -1,6 +1,6 @@
 
-Arduino UNO
-1.8.19
+BOARD:  Arduino UNO R3
+IDE:    1.8.19
 
 Test with hardware.
 -----

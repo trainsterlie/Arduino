@@ -13,8 +13,6 @@ uint8_t clockPin = 7;
 
 HX710B HX(dataPin, clockPin);
 
-float __beta;
-float __alpha;
 
 void setup()
 {
@@ -40,7 +38,8 @@ void loop()
 {
   if (HX.is_ready())
   {
-    Serial.println(HX.read(1), 1);
+    Serial.println(HX.fetch(true), 1);
+    HX.request();
   }
   //  do other tasks
 }
