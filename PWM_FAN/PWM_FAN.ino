@@ -32,7 +32,8 @@ void setup() {
   pinMode(FAN_READ, INPUT_PULLUP); //set pinmode of FAN_READ, tach pwm input
   attachInterrupt(digitalPinToInterrupt(FAN_READ), Pulse_Event, FALLING); //here we define our Interrupt routine, basically pulseIn on steroids
   Serial.begin(9600);
-  delay(1000);
+  Serial.println("Loading Program... Please wait");
+  delay(5000); //delay to prevent erroneous readings when we first on our power supply
   AskTime = millis(); 
 }
 
@@ -41,9 +42,15 @@ void loop() {
   int val = map(analogRead(POT_PIN), 0, 1023, 0, 255); //here we map the analogRead min-max of 0-1023 to analogWrite range of 0-255 and  we write the mapped value from the potentiometer to the PWM signal of the fan
   pwmWrite(FAN_SIG, val); //part of PWM library, in this case val is the duty cycle
   Serial.println(duration); //part of debug where we print out the duration
-
+  if (micros() - LastPulse > TIMEOUT && !timeout){ //if time between lastpulse and now is more than our user-defined TIMEOUT value AND timeout is not already true
+    for (int u = 0;u<num_readings;u++){
+      readings[u] = 0; //reset the array 
+    }
+    done=false;
+    timeout = true;
+  }
   if (done){ //wait for ISR to update value
-    noInterrupts();
+    noInterrupts(); //keep our no interrupt period as small as possible
     RPM = (60e6/duration)/PPR; // since one pulse takes duration
     interrupts();
     if (read_index >= num_readings){
