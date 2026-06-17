@@ -2,7 +2,7 @@
 #include <SoftwareSerial.h>
 #define RATIO 150
 #define STEPS 256 //must be in 2^n form, eg 2,4,8,16,64,128,256
-#define SLEW_SPEED 12000
+#define SLEW_SPEED 60000
 // SoftwareSerial can be used on Arduino boards without HardwareSerial ports,
 // such as the Uno, Nano, and Mini.
 //
