@@ -1,3 +1,4 @@
+#include <Arduino.h>
 const uint8_t EN_PIN = 5;
 const uint8_t DIR_PIN = 6;
 const uint8_t PWM_PIN = 9;
@@ -13,22 +14,20 @@ volatile uint8_t counter;
 #define CW 1
 #define CCW 0
 #define PPR 100
-
 typedef struct container{
   uint8_t identifier;
   volatile uint8_t state = 0;
   volatile uint32_t timing = 0;
-  Wire other;
-} Wire;
-
+  container* other;
+};
+struct container FDBK_A;
+struct container FDBK_B;
 void setup() {
   // put your setup code here, to run once:
-  Wire FDBK_A;
-  Wire FDBK_B;
   FDBK_A.identifier = A;
   FDBK_B.identifier = B;
-  FDBK_A.other = FDBK_B;
-  FDBK_B.other = FDBK_A;
+  FDBK_A.other = &FDBK_B;
+  FDBK_B.other = &FDBK_A;
   Serial.begin(9600);
   pinMode(PWM_PIN, OUTPUT);
   pinMode(EN_PIN, OUTPUT);
@@ -49,35 +48,46 @@ void setup() {
   OCR1A = 400; // 50% duty cycle
   digitalWrite(EN_PIN, HIGH);
   digitalWrite(DIR_PIN, LOW);
-  attachInterrupt(digitalPintoInterrupt(ENC_A), PulseInterrupt(FDBK_A), RISING);
-  attachInterrupt(digitalPintoInterrupt(ENC_B), PulseInterrupt(FDBK_B), RISING);
+  attachInterrupt(digitalPinToInterrupt(ENC_A), PulseInterruptA, RISING);
+  attachInterrupt(digitalPinToInterrupt(ENC_B), PulseInterruptB, RISING);
 }
 
-void PulseInterrupt(Wire CURR){
-  CURR.timing = millis()-CURR.timing //keep updating the timing every time the encoder passes
-  if (CURR.other.state){ //if the other signal has already arrived, means that the curr signal is the last one.
-    if (CURR.identifier == A) //if our current last wire is A, we judge that the shaft is moving CCW since B->A
+void PulseInterruptA(){
+  FDBK_A.timing = millis()-FDBK_A.timing; //keep updating the timing every time the encoder passes
+  if (FDBK_A.other->state){ //if the other signal has already arrived, means that the FDBK_A signal is the last one.
+    if (FDBK_A.identifier == A) //if our current last wire is A, we judge that the shaft is moving CCW since B->A
       direction = CCW;
     else //else we judge that the shaft is moving CW
       direction = CW;
-      !CURR.other.state; //and we reset the other wire's state back to 0
+      !FDBK_A.other->state; //and we reset the other wire's state back to 0
   }
   else //else we just switch on the current wire's state
-    !CURR.state;
+    !FDBK_A.state;
+}
+void PulseInterruptB(){
+  FDBK_B.timing = millis()-FDBK_B.timing; //keep updating the timing every time the encoder passes
+  if (FDBK_B.other->state){ //if the other signal has already arrived, means that the curr signal is the last one.
+    if (FDBK_B.identifier == A) //if our current last wire is A, we judge that the shaft is moving CCW since B->A
+      direction = CCW;
+    else //else we judge that the shaft is moving CW
+      direction = CW;
+      !FDBK_B.other->state; //and we reset the other wire's state back to 0
+  }
+  else //else we just switch on the current wire's state
+    !FDBK_B.state;
+}
+uint32_t calculate_rpm(volatile uint32_t time_between_pulses){
+  return (time_between_pulses*PPR)/1000; //time taken for 1 revolution in milliseconds
 }
 
-uint32_t calculate_rpm(volatile time_between_pulses){
-  return (time_between_pulses*PPR)/1000 //time taken for 1 revolution in milliseconds
-}
 void loop() {
   // put your main code here, to run repeatedly:
-  
   pot_value = map(analogRead(POT_PIN), 0, 1023, 0, 510);
   delay(500);
   Serial.print("Current pot_value: ");
   Serial.println(pot_value);
   OCR1A = pot_value;
   Serial.print("RPM:");
-  Serial.println(counter)
-  RPM = uint32_t((calculate_rpm(A.timing()) + calculate_rpm(B.timing()))/2)
+  Serial.println(counter);
+  RPM = uint32_t((calculate_rpm(FDBK_A.timing) + calculate_rpm(FDBK_B.timing))/2);
 }
