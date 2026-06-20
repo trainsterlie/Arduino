@@ -15,7 +15,7 @@ volatile uint32_t current_time;
 #define CW 1
 #define CCW 0
 #define PPR 100
-#define EMA_MULTI = 0.18
+#define EMA_MULTI 0.60
 typedef struct container{
   uint8_t identifier;
   volatile uint8_t state = 0;
@@ -55,7 +55,7 @@ void setup() {
   FDBK_B.elapsed_time = millis();
 }
 void PulseInterruptA(){ //this time using CHANGE instead of just RISING or FALLING, so everytime this ISR is triggered we get the time between each pulse
-    current_time = micros()
+    current_time = micros();
     FDBK_A.timing = current_time-FDBK_A.elapsed_time;
     FDBK_A.elapsed_time = current_time;
   if (FDBK_A.other->state){ //if the other signal has already arrived, means that the FDBK_A signal is the last one, and the FDBK_B signal came first
@@ -67,7 +67,7 @@ void PulseInterruptA(){ //this time using CHANGE instead of just RISING or FALLI
     FDBK_A.state = !FDBK_A.state;}
 }
 void PulseInterruptB(){
-  current_time = micros()
+  current_time = micros();
   FDBK_B.timing = current_time-FDBK_B.elapsed_time;
   FDBK_B.elapsed_time = current_time;
   if (FDBK_B.other->state){ //if the other signal has already arrived, means that the FDBK_A signal is the last one, and the FDBK_B signal came first
@@ -82,13 +82,13 @@ uint32_t calculate_rpm(volatile uint32_t time_between_pulses){
   if (!time_between_pulses){
     return 0;
   }
-  return uint32_t(600000/(time_between_pulses)); //time taken for 1 revolution in milliseconds
+  return uint32_t(600000/(time_between_pulses)); //time taken for 1 revolution in microseconds
 }
-uint32_t expo_moving_average(uint32_t prev_rpm, uint32_t current_rpm, float multiplier){
-  return uint32_t(multiplier*current_rpm + (prev_rpm*(1-multiplier)))
+uint32_t expo_moving_average(uint32_t prev_rpm, uint32_t current_rpm, float multiplier){ //using the formula for exponential moving average to smoothen out the RPM values
+  return uint32_t(multiplier*current_rpm + (prev_rpm*(1-multiplier))); //large multiplier value to smoothen out more (more lag)
 }
 void check_validity_timing(void){ //this helper function is to check if rpm has gone to 0 (eg sudden stop)
-  if (((micros()-FDBK_A.elapsed_time) > 5000) && ((micros()-FDBK_B.elapsed_time) > 5000)){ //since if the current time millis() has exceeded the last recorded time a pulse was detected by more than 1 seconds we reset the timing attribute
+  if (((micros()-FDBK_A.elapsed_time) > 5000) && ((micros()-FDBK_B.elapsed_time) > 5000)){ //since if the current time micros() has exceeded the last recorded time a pulse was detected by more than 1 seconds we reset the timing attribute
     FDBK_A.timing = 0;
     FDBK_B.timing = 0;
   }
