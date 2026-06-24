@@ -159,7 +159,7 @@ void PID(uint32_t (*CURRENT)(void), uint32_t TARGET, float Kp, float Ki, float K
   time_interval = micros()-time_elapsed;  
   time_elapsed = micros();
   cumulative_integral_val += ((time_interval/1000000.0)*error);
-  new_output = Kp*(float(error)) + Ki*(float(cumulative_integral_val)) + Kd*((error-past_error)/(time_interval/1000000.0));
+  new_output = Kp*(float(error)) + Ki*(cumulative_integral_val) + Kd*((error-past_error)/(time_interval/1000000.0));
   past_error = error;
   //Serial.print("new_output");
   func(constrain(new_output, -100, 100)); //relies on linear scaling of rpm to duty cycle, where 0 duty cycle = maxrpm and 510 duty cycle = 0 rpm
