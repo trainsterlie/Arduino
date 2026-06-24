@@ -12,22 +12,22 @@ const uint8_t BRAKE_PIN = 7;
 const uint8_t POT_PIN = A0;
 const uint8_t ENC_A = 2;
 const uint8_t ENC_B = 3;
-uint32_t pot_value;
+uint32_t pot_value, current_percent_level = 0, RPM = 0;
 uint8_t direction = 0; //0 is CCW, 1 is clockwise
-uint32_t RPM = 0;
 volatile uint8_t counter;
 volatile uint32_t current_time;
+double error, past_error, new_output, cumulative_integral_val = 0;
+uint32_t time_elapsed = 0, time_interval;
 #define A 0
 #define B 1
 #define CW 1
 #define CCW 0
 #define PPR 100
-#define EMA_MULTI 0.60
+#define EMA_MULTI 0.90
 #define MAX_RPM = 2800 //change this based off the voltage 
 #define KP 0.01f
 #define KI 0.01f
-#define KD 0.00f
-#define ERROR_GAP 10
+#define KD 0.01f
 typedef struct container{
   uint8_t identifier;
   volatile uint8_t state = 0;
@@ -106,6 +106,8 @@ void check_validity_timing(void){ //this helper function is to check if rpm has 
 }
 uint32_t get_rpm(void){ //function here to get the current RPM through using exponenential moving average to smoothen out the RPM readings. You can use a higher EMA_MULTIPLIER value to smoothen out the readings even more at the cost of reaction time
   uint32_t new_rpm = expo_moving_average((calculate_rpm(FDBK_A.timing*2) + calculate_rpm(FDBK_B.timing*2))/2, RPM, EMA_MULTI);
+  if (new_rpm > 9999)
+    return RPM;
   RPM = new_rpm;
   return new_rpm;
 }
@@ -126,9 +128,8 @@ void Change_Direction(uint8_t DIR_PIN){ //change direction of the motor
   digitalWrite(DIR_PIN, direction); //make sure to change this to the correct movement
   delay(50); //delay to ensure safety
 }
-void set_PWM(uint32_t percent_max_speed){
+/*void set_PWM(long percent_max_speed){
   Serial.print("Percent max speed sent to set_PWM: ");
-  Serial.println(percent_max_speed);
   if (percent_max_speed > 0){ //if requested speed is more than 0 i.e in the clockwise direction
     if (!direction){ //check if direction is CCW now, if yes we reverse direction, else we simply pass this if statement
         Change_Direction(DIR_PIN);}
@@ -142,25 +143,29 @@ void set_PWM(uint32_t percent_max_speed){
   else{ //else if percent_max_speed was commanded to be 0, we simply brake
     Brake(BRAKE_PIN);
   }
+}*/
+
+void set_PWM(long percent_difference){
+  //Serial.print("Current percent level duty sent to set_PWM: ");
+  //Serial.println(current_percent_level);
+  current_percent_level += percent_difference;
+  OCR1A = uint32_t(map(current_percent_level, 0, 100, 510, 0)); //we set the percent speed here with respect to our identified duty values for 0 and 100% power
 }
 void PID(uint32_t (*CURRENT)(void), uint32_t TARGET, float Kp, float Ki, float Kd, void (*func)(uint32_t)){
-  uint32_t error = TARGET- CURRENT();
-  float cumulative_integral_val = 0;
-  uint32_t time_interval;
-  uint32_t new_output;
-  Serial.print("Error: ");
-  Serial.println(error);
-  while (error > ERROR_GAP){
-    
-    error = TARGET - CURRENT();
-    time_interval = millis();
-    cumulative_integral_val += (time_interval*(CURRENT()-TARGET));
-    new_output = Kp*(error) + Ki*(cumulative_integral_val);
-    func(constrain(new_output, -100, 100)); //relies on linear scaling of rpm to duty cycle, where 0 duty cycle = maxrpm and 510 duty cycle = 0 rpm
-  }
+  long current_val = CURRENT();
+  error = (long)TARGET - current_val;
+  //Serial.print("Error: ");
+  //Serial.println(error);
+  time_interval = micros()-time_elapsed;  
+  time_elapsed = micros();
+  cumulative_integral_val += ((time_interval/1000000.0)*error);
+  new_output = Kp*(float(error)) + Ki*(float(cumulative_integral_val)) + Kd*((error-past_error)/(time_interval/1000000.0));
+  past_error = error;
+  //Serial.print("new_output");
+  func(constrain(new_output, -100, 100)); //relies on linear scaling of rpm to duty cycle, where 0 duty cycle = maxrpm and 510 duty cycle = 0 rpm
 }
-void Motor_PID(uint32_t (*CURRENT_RPM)(void), uint32_t TARGET){
-  PID(CURRENT_RPM, TARGET, KP, KI, KD, set_PWM); //sending a function pointer into PID
+void Motor_PID(uint32_t TARGET){
+  PID(get_rpm, TARGET, KP, KI, KD, set_PWM); //sending a function pointer into PID
 }
 /*void Accel_PID(uint32_t CURRENT, uint32_t TARGET){
   PID(CURRENT, TARGET, KP, KI, KD, accel_func);
@@ -179,14 +184,17 @@ void loop() {
     }
   }
   pot_value = map(analogRead(POT_PIN), 0, 1023, 0, 2000); //original rightmost value is 510
-  Serial.print("Requested RPM: ");
+  //Serial.print("Requested RPM: ");
   Serial.println(pot_value);
-  delay(1000);
+  Serial.print(",");
+  //Serial.print("Current RPM: ");
+  Serial.println(get_rpm());
+  delay(50);
   //Serial.print("Current pot_value: ");
   //Serial.println(pot_value);
-  Motor_PID(get_rpm(), pot_value);
+  Motor_PID(pot_value);
   //Serial.print("RPM:");
-  Serial.println(get_rpm());
+  //Serial.println(get_rpm());
   //Serial.print("Direction: ");
   //Serial.println(get_direction());
   check_validity_timing();
