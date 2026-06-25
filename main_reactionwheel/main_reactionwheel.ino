@@ -1,10 +1,13 @@
 //main reaction wheel sketch
 //functions to implement
-//Error (PID)
-//Motor Drive Function(Motor Smoothing), takes in the target rpm and smoothens out the acceleration of the motor until it reaches the target rpm
-//Brake Function (enable the Brake pin)
-//Reverse Function (enables/disables the Direction pin)
+//Error (PID) (Done)
+//Motor Drive Function(Motor Smoothing), takes in the target rpm and smoothens out the acceleration of the motor until it reaches the target rpm (Done)
+//Brake Function (enable the Brake pin) (Done)
+//Reverse Function (enables/disables the Direction pin) (Done)
 #include <Arduino.h>
+#include "FastIMU.h"
+#include <Wire.h>
+#include <math.h>
 const uint8_t EN_PIN = 5;
 const uint8_t DIR_PIN = 6;
 const uint8_t PWM_PIN = 9;
@@ -18,16 +21,21 @@ volatile uint8_t counter;
 volatile uint32_t current_time;
 double error, past_error, new_output, cumulative_integral_val = 0;
 uint32_t time_elapsed = 0, time_interval;
+float accelX, accelY, accelZ;
+double current_angle;
 #define A 0
 #define B 1
 #define CW 1
 #define CCW 0
 #define PPR 100
 #define EMA_MULTI 0.90
-#define MAX_RPM = 2800 //change this based off the voltage 
-#define KP 0.01f
+#define KP 0.01f //change later
 #define KI 0.01f
 #define KD 0.01f
+#define IMU_ADDRESS 0x68
+MPU6050 IMU;
+calData calib = {0};
+AccelData accelData;
 typedef struct container{
   uint8_t identifier;
   volatile uint8_t state = 0;
@@ -39,11 +47,40 @@ struct container FDBK_A;
 struct container FDBK_B;
 void setup() {
   // put your setup code here, to run once:
+  Wire.begin();
+  Wire.setClock(400000);
+  Serial.begin(115200);
+  while (!Serial){ //we wait for Serial to give us a signal indiciating we have data streaming through the i2c
+    ; 
+  }
+  #ifdef PERFORM_CALIBRATION //start of our calibration routine
+    Serial.println("Calibrating Accelerometer...");
+    delay(2000);
+    Serial.println("Keep IMU in the neutral position.");
+    delay(5000);
+    IMU.calibrateAccelGyro(&calib);
+    Serial.println("Accel biases X/Y/Z: ");
+    Serial.print(calib.accelBias[0]);
+    Serial.print(", ");
+    Serial.print(calib.accelBias[1]);
+    Serial.print(", ");
+    Serial.println(calib.accelBias[2]);
+    delay(5000);
+    IMU.init(calib, IMU_ADDRESS);
+  #endif
+  uint8_t err;
+  err = IMU.setAccelRange(2);
+  if (err != 0) {
+  Serial.print("Error setting range: ");
+  Serial.println(err);
+  while (true){
+    ;
+  }
+  }
   FDBK_A.identifier = A;
   FDBK_B.identifier = B;
   FDBK_A.other = &FDBK_B;
   FDBK_B.other = &FDBK_A;
-  Serial.begin(9600);
   pinMode(PWM_PIN, OUTPUT);
   pinMode(BRAKE_PIN, OUTPUT);
   pinMode(DIR_PIN, OUTPUT);
@@ -59,9 +96,9 @@ void setup() {
   ICR1 = 799; 
   // Set Duty Cycle for Pin 9 (between 0 and 799)
   OCR1A = 400; // 50% duty cycle
-  digitalWrite(BRAKE_PIN, HIGH);
-  digitalWrite(DIR_PIN, direction);
-  attachInterrupt(digitalPinToInterrupt(ENC_A), PulseInterruptA, CHANGE);
+  digitalWrite(BRAKE_PIN, HIGH); //sending HIGH to our BRAKE_PIN disables the brake
+  digitalWrite(DIR_PIN, direction); //set our direction first here to the DIR_PIN, we start off with CCW
+  attachInterrupt(digitalPinToInterrupt(ENC_A), PulseInterruptA, CHANGE); //attach interrupts to both encoder feedback wires
   attachInterrupt(digitalPinToInterrupt(ENC_B), PulseInterruptB, CHANGE);
   FDBK_A.elapsed_time = millis();
   FDBK_B.elapsed_time = millis();
@@ -90,13 +127,13 @@ void PulseInterruptB(){
   else{ //else we just switch on the current wire's state
     FDBK_B.state = !FDBK_B.state;}
 }
-uint32_t calculate_rpm(volatile uint32_t time_between_pulses){  
-  if (!time_between_pulses)
+uint32_t calculate_rpm(volatile uint32_t time_between_pulses){  //time_between_pulses is in microseconds
+  if (!time_between_pulses) //if time between pulses is 0, we return a rpm of 0
     return 0;
   return uint32_t(600000/(time_between_pulses)); //time taken for 1 revolution in microseconds
 }
-uint32_t expo_moving_average(uint32_t prev_rpm, uint32_t current_rpm, float multiplier){ //using the formula for exponential moving average to smoothen out the RPM values
-  return uint32_t(multiplier*current_rpm + (prev_rpm*(1-multiplier))); //large multiplier value to smoothen out more (more lag)
+double expo_moving_average(uint32_t prev, uint32_t current, float multiplier){ //using the formula for exponential moving average to smoothen out the values
+  return double(multiplier*current + (prev*(1-multiplier))); //large multiplier value to smoothen out more (more lag)
 }
 void check_validity_timing(void){ //this helper function is to check if rpm has gone to 0 (eg sudden stop)
   if (((micros()-FDBK_A.elapsed_time) > 5000) && ((micros()-FDBK_B.elapsed_time) > 5000)){ //since if the current time micros() has exceeded the last recorded time a pulse was detected by more than 1 seconds we reset the timing attribute
@@ -104,9 +141,9 @@ void check_validity_timing(void){ //this helper function is to check if rpm has 
     FDBK_B.timing = 0;
   }
 }
-uint32_t get_rpm(void){ //function here to get the current RPM through using exponenential moving average to smoothen out the RPM readings. You can use a higher EMA_MULTIPLIER value to smoothen out the readings even more at the cost of reaction time
-  uint32_t new_rpm = expo_moving_average((calculate_rpm(FDBK_A.timing*2) + calculate_rpm(FDBK_B.timing*2))/2, RPM, EMA_MULTI);
-  if (new_rpm > 9999)
+double get_average_rpm(void){ //function here to get the current RPM through using exponenential moving average to smoothen out the RPM readings. You can use a higher EMA_MULTIPLIER value to smoothen out the readings even more at the cost of reaction time
+  double new_rpm = expo_moving_average((calculate_rpm(FDBK_A.timing*2) + calculate_rpm(FDBK_B.timing*2))/2, RPM, EMA_MULTI); //we get the average of RPM readings from both A and B encoder values and consequently use the expo_moving_average formula to smoothen out the rpm values
+  if (new_rpm > 9999) //occasionally at the start of the program the rpm will exceed a very high value, to avoid this we tentatively include a impossible placeholder 
     return RPM;
   RPM = new_rpm;
   return new_rpm;
@@ -128,50 +165,76 @@ void Change_Direction(uint8_t DIR_PIN){ //change direction of the motor
   digitalWrite(DIR_PIN, direction); //make sure to change this to the correct movement
   delay(50); //delay to ensure safety
 }
-/*void set_PWM(long percent_max_speed){
-  Serial.print("Percent max speed sent to set_PWM: ");
-  if (percent_max_speed > 0){ //if requested speed is more than 0 i.e in the clockwise direction
-    if (!direction){ //check if direction is CCW now, if yes we reverse direction, else we simply pass this if statement
-        Change_Direction(DIR_PIN);}
-    OCR1A = uint32_t(510 * percent_max_speed/100);
-  }
-  else if (percent_max_speed < 0){ //in the case where the motor direction is commanded to be reversed
-    if (direction){ //check if direction is CW now, if yes we reverse direction, else we simply pass this if statement
-      Change_Direction(DIR_PIN);}
-    OCR1A = uint32_t(510 * abs(percent_max_speed)/100);
-  }
-  else{ //else if percent_max_speed was commanded to be 0, we simply brake
-    Brake(BRAKE_PIN);
-  }
-}*/
-
 void set_PWM(long percent_difference){
-  //Serial.print("Current percent level duty sent to set_PWM: ");
-  //Serial.println(current_percent_level);
   current_percent_level += percent_difference;
   OCR1A = uint32_t(map(current_percent_level, 0, 100, 510, 0)); //we set the percent speed here with respect to our identified duty values for 0 and 100% power
 }
-void PID(uint32_t (*CURRENT)(void), uint32_t TARGET, float Kp, float Ki, float Kd, void (*func)(uint32_t)){
-  long current_val = CURRENT();
-  error = (long)TARGET - current_val;
+void PID(double (*CURRENT)(void), double TARGET, float Kp, float Ki, float Kd, void (*func)(uint32_t)){
+  double current_val = CURRENT();
+  error = TARGET - current_val;
   //Serial.print("Error: ");
   //Serial.println(error);
   time_interval = micros()-time_elapsed;  
   time_elapsed = micros();
   cumulative_integral_val += ((time_interval/1000000.0)*error);
-  new_output = Kp*(float(error)) + Ki*(cumulative_integral_val) + Kd*((error-past_error)/(time_interval/1000000.0));
+  new_output = Kp*(float(error)) + Ki*(cumulative_integral_val) + Kd*((error-past_error)/(time_interval/1000000.0));//core function here
   past_error = error;
   //Serial.print("new_output");
-  func(constrain(new_output, -100, 100)); //relies on linear scaling of rpm to duty cycle, where 0 duty cycle = maxrpm and 510 duty cycle = 0 rpm
+  func(double(constrain(new_output, -100, 100))); //relies on linear scaling of rpm to duty cycle, where 0 duty cycle = maxrpm and 510 duty cycle = 0 rpm
 }
-void Motor_PID(uint32_t TARGET){
-  PID(get_rpm, TARGET, KP, KI, KD, set_PWM); //sending a function pointer into PID
+//start of our accel functions
+double get_angle(float Y, float Z){
+  double angle = acos(Z/1); //cos inverse Z to get the current angle with respect to the vertical
+  if (Y>0){ //fix this
+    return -1*angle; //return the negative angle
+  }
+  else{
+    return angle;
+  }
 }
-/*void Accel_PID(uint32_t CURRENT, uint32_t TARGET){
-  PID(CURRENT, TARGET, KP, KI, KD, accel_func);
-}*/
+void set_ANGLE(double output_error){
+  if (error>0){ //once again check for correct motor direction
+    current_percent_level += output_error;
+    OCR1A = uint32_t(map(current_percent_level, 0, 100, 510, 0));
+  }
+  else{
+    current_percent_level -= output_error;
+    OCR1A = uint32_t(map(current_percent_level, 0, 100, 510, 0));
+  }
+}
+bool is_on_side(double angle){
+  if (abs(angle) > 30){
+    return true;
+  }
+  return false;
+}
+void Jump(double angle){
+  if (angle>0){
+    while (get_average_rpm() < 390){
+      Motor_PID(400);} //blocking PID function here to ensure the motor gets up to fast enough speed to jerk itself upwards
+  }
+  else{
+    while (get_average_rpm() <390){
+      Motor_PID(-400);}
+  }
+  Brake(BRAKE_PIN);
+  delay(100);
+}
+
+void Motor_PID(double TARGET){
+  PID(get_average_rpm, TARGET, KP, KI, KD, set_PWM); //sending a function pointer into PID
+}
+void Accel_PID(double TARGET){
+  PID(get_angle, 0, KP, KI, KD, set_PWM);
+}
 void loop() {
   // put your main code here, to run repeatedly:
+  IMU.update();
+  IMU.getAccel(&accelData);
+  accelX = accelData.accelX;
+  accelY = accelData.accelY;
+  accelZ = accelData.accelZ;
+  current_angle = get_angle(accelY, accelZ);
   if (Serial.available() > 0){
     char charac = Serial.read();
     if (charac == 'B'){
@@ -188,7 +251,7 @@ void loop() {
   Serial.println(pot_value);
   Serial.print(",");
   //Serial.print("Current RPM: ");
-  Serial.println(get_rpm());
+  Serial.println(get_average_rpm());
   delay(50);
   //Serial.print("Current pot_value: ");
   //Serial.println(pot_value);

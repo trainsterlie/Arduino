@@ -1,7 +1,7 @@
 #include "FastIMU.h"
 #include <Wire.h>
 
-#define IMU_ADDRESS 0x69
+#define IMU_ADDRESS 0x68
 #define PERFORM_CALIBRATION
 MPU6050 IMU;
 calData calib = { 0 };
