@@ -16,7 +16,7 @@ const uint8_t POT_PIN = A0;
 const uint8_t ENC_A = 2;
 const uint8_t ENC_B = 3;
 uint32_t RPM = 0;
-uint8_t past_A_state, direction = 0; //1 is CCW, 0 is clockwise
+uint8_t past_A_state, commanded_direction = 0, direction = 0; //1 is CCW, 0 is clockwise
 volatile uint8_t counter;
 volatile uint32_t current_time;
 double error, past_error, new_output, pot_value, cumulative_integral_val = 0;
@@ -106,7 +106,7 @@ void setup() {
   // Set Duty Cycle for Pin 9 (between 0 and 799)
   OCR1A = 400; // 50% duty cycle
   digitalWrite(BRAKE_PIN, HIGH); //sending HIGH to our BRAKE_PIN disables the brake
-  digitalWrite(DIR_PIN, !direction); //set our direction first here to the DIR_PIN, we start off with CCW
+  digitalWrite(DIR_PIN, commanded_direction); //set our direction first here to the DIR_PIN, we start off with CCW
   attachInterrupt(digitalPinToInterrupt(ENC_A), PulseInterruptA, CHANGE); //attach interrupts to both encoder feedback wires
   attachInterrupt(digitalPinToInterrupt(ENC_B), PulseInterruptB, CHANGE);
   FDBK_A.elapsed_time = millis();
@@ -168,7 +168,7 @@ void Brake(uint8_t BRAKE_PIN){ //implement the braking function of the motor
 }
 void Change_Direction(uint8_t DIR_PIN){ //change direction of the motor
   Brake(BRAKE_PIN); //trigger the brake_pin to safely change directions
-  digitalWrite(DIR_PIN, direction); //make sure to change this to the correct movement
+  digitalWrite(DIR_PIN, !direction); //make sure to change this to the correct movement
   delay(50); //delay to ensure safety
 }
 void set_PWM(double percent_difference){
