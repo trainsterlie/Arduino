@@ -2,7 +2,7 @@
 #include <Wire.h>
 
 #define IMU_ADDRESS 0x68
-#define PERFORM_CALIBRATION
+//#define PERFORM_CALIBRATION
 MPU6050 IMU;
 calData calib = { 0 };
 AccelData accelData;

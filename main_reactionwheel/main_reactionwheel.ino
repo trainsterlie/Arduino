@@ -15,11 +15,12 @@ const uint8_t BRAKE_PIN = 7;
 const uint8_t POT_PIN = A0;
 const uint8_t ENC_A = 2;
 const uint8_t ENC_B = 3;
-uint32_t pot_value, current_percent_level = 0, RPM = 0;
-uint8_t direction = 0; //0 is CCW, 1 is clockwise
+uint32_t RPM = 0;
+uint8_t past_A_state, direction = 0; //1 is CCW, 0 is clockwise
 volatile uint8_t counter;
 volatile uint32_t current_time;
-double error, past_error, new_output, cumulative_integral_val = 0;
+double error, past_error, new_output, pot_value, cumulative_integral_val = 0;
+double current_percent_level = 0;
 uint32_t time_elapsed = 0, time_interval;
 float accelX, accelY, accelZ;
 double current_angle;
@@ -29,16 +30,18 @@ double current_angle;
 #define CCW 0
 #define PPR 100
 #define EMA_MULTI 0.90
-#define KP 0.01f //change later
-#define KI 0.01f
-#define KD 0.01f
+#define KP 0.10f //motor_pid values are 0.01, 0.01, 0.01
+#define KI 0.00f
+#define KD 0.00f
 #define IMU_ADDRESS 0x68
+//#define PERFORM_CALIBRATION 1
 MPU6050 IMU;
 calData calib = {0};
 AccelData accelData;
+GyroData gyroData;
 typedef struct container{
   uint8_t identifier;
-  volatile uint8_t state = 0;
+  volatile uint8_t state;
   volatile uint32_t timing = 0;
   volatile uint32_t elapsed_time = 0;
   container* other;
@@ -53,6 +56,7 @@ void setup() {
   while (!Serial){ //we wait for Serial to give us a signal indiciating we have data streaming through the i2c
     ; 
   }
+  int err = IMU.init(calib, IMU_ADDRESS);
   #ifdef PERFORM_CALIBRATION //start of our calibration routine
     Serial.println("Calibrating Accelerometer...");
     delay(2000);
@@ -68,7 +72,10 @@ void setup() {
     delay(5000);
     IMU.init(calib, IMU_ADDRESS);
   #endif
-  uint8_t err;
+  //calib.accelBias[0] = 0.03;
+  //calib.accelBias[1] = 0.03;
+  //calib.accelBias[2] = 0.04;
+  err = IMU.setGyroRange(500);
   err = IMU.setAccelRange(2);
   if (err != 0) {
   Serial.print("Error setting range: ");
@@ -81,6 +88,8 @@ void setup() {
   FDBK_B.identifier = B;
   FDBK_A.other = &FDBK_B;
   FDBK_B.other = &FDBK_A;
+  FDBK_A.state = digitalRead(ENC_A); //change here
+  FDBK_B.state = digitalRead(ENC_B);
   pinMode(PWM_PIN, OUTPUT);
   pinMode(BRAKE_PIN, OUTPUT);
   pinMode(DIR_PIN, OUTPUT);
@@ -97,35 +106,35 @@ void setup() {
   // Set Duty Cycle for Pin 9 (between 0 and 799)
   OCR1A = 400; // 50% duty cycle
   digitalWrite(BRAKE_PIN, HIGH); //sending HIGH to our BRAKE_PIN disables the brake
-  digitalWrite(DIR_PIN, direction); //set our direction first here to the DIR_PIN, we start off with CCW
+  digitalWrite(DIR_PIN, !direction); //set our direction first here to the DIR_PIN, we start off with CCW
   attachInterrupt(digitalPinToInterrupt(ENC_A), PulseInterruptA, CHANGE); //attach interrupts to both encoder feedback wires
   attachInterrupt(digitalPinToInterrupt(ENC_B), PulseInterruptB, CHANGE);
   FDBK_A.elapsed_time = millis();
   FDBK_B.elapsed_time = millis();
 }
 void PulseInterruptA(){ //this time using CHANGE instead of just RISING or FALLING, so everytime this ISR is triggered we get the time between each pulse
-    current_time = micros();
-    FDBK_A.timing = current_time-FDBK_A.elapsed_time;
-    FDBK_A.elapsed_time = current_time;
-  if (FDBK_A.other->state){ //if the other signal has already arrived, means that the FDBK_A signal is the last one, and the FDBK_B signal came first
-      direction = CCW;
-      FDBK_A.state = 0;
-      FDBK_A.other->state = !FDBK_A.other->state; //and we reset the other wire's state back to 0
+  current_time = micros();
+  FDBK_A.timing = current_time-FDBK_A.elapsed_time;//this is the time interval between each CHANGE pulse
+  FDBK_A.elapsed_time = current_time; //and the total time taken so far in micros()
+  past_A_state = FDBK_A.state; //we get the past state. 
+  FDBK_A.state = !FDBK_A.state; //we get the current_state
+  if (!past_A_state){ //the case where past state == 0, which means that the current state is RISING
+    if (FDBK_A.other->state){ //if at this current state B is HIGH, it means that the direction is in CCW
+      direction=CCW;
+    }
+    else{ //else if B's state is LOW at this point, we are moving in CW
+      direction = CW;
+    }
   }
-  else{ //else we just switch on the current wire's state
-    FDBK_A.state = !FDBK_A.state;}
 }
 void PulseInterruptB(){
   current_time = micros();
   FDBK_B.timing = current_time-FDBK_B.elapsed_time;
   FDBK_B.elapsed_time = current_time;
-  if (FDBK_B.other->state){ //if the other signal has already arrived, means that the FDBK_A signal is the last one, and the FDBK_B signal came first
-      direction = CW;
-      FDBK_B.state = 0;
-        FDBK_B.other->state = !FDBK_B.other->state; //and we reset the other wire's state back to 0
-  }
-  else{ //else we just switch on the current wire's state
-    FDBK_B.state = !FDBK_B.state;}
+  FDBK_B.state = !FDBK_B.state; //we get the current_state
+}
+uint8_t get_direction(struct container A_Wire){ //simply returns direction of the motor, CW is 0 and CCW is 1
+  return direction;
 }
 uint32_t calculate_rpm(volatile uint32_t time_between_pulses){  //time_between_pulses is in microseconds
   if (!time_between_pulses) //if time between pulses is 0, we return a rpm of 0
@@ -148,9 +157,7 @@ double get_average_rpm(void){ //function here to get the current RPM through usi
   RPM = new_rpm;
   return new_rpm;
 }
-uint32_t get_direction(void){ //simply returns direction of the motor, CW is 0 and CCW is 1
-  return direction;
-}
+
 void Brake(uint8_t BRAKE_PIN){ //implement the braking function of the motor
   digitalWrite(BRAKE_PIN, LOW); //setting the brake_pin to high triggers the brake function of the motor
   delay(100); //implement delays here to ensure the motor brakes properly
@@ -161,16 +168,27 @@ void Brake(uint8_t BRAKE_PIN){ //implement the braking function of the motor
 }
 void Change_Direction(uint8_t DIR_PIN){ //change direction of the motor
   Brake(BRAKE_PIN); //trigger the brake_pin to safely change directions
-  direction = !direction;
   digitalWrite(DIR_PIN, direction); //make sure to change this to the correct movement
   delay(50); //delay to ensure safety
 }
-void set_PWM(long percent_difference){
+void set_PWM(double percent_difference){
+  Serial.print("current percent level: ");
+  Serial.println(current_percent_level);
   current_percent_level += percent_difference;
-  OCR1A = uint32_t(map(current_percent_level, 0, 100, 510, 0)); //we set the percent speed here with respect to our identified duty values for 0 and 100% power
+  current_percent_level = constrain(current_percent_level, -100, 100);
+  if (current_percent_level < 0 && direction != CCW){
+    Change_Direction(DIR_PIN);
+  }
+  else if (current_percent_level > 0 && direction != CW){
+    Change_Direction(DIR_PIN);
+  }
+  OCR1A = uint32_t(map(abs(current_percent_level), 0, 100, 510, 0)); //we set the percent speed here with respect to our identified duty values for 0 and 100% power
 }
-void PID(double (*CURRENT)(void), double TARGET, float Kp, float Ki, float Kd, void (*func)(uint32_t)){
+void PID(double (*CURRENT)(void), double TARGET, float Kp, float Ki, float Kd, void (*func)(double)){
   double current_val = CURRENT();
+  if (direction == CCW){
+    current_val = current_val*-1.0;
+  }
   error = TARGET - current_val;
   //Serial.print("Error: ");
   //Serial.println(error);
@@ -179,28 +197,22 @@ void PID(double (*CURRENT)(void), double TARGET, float Kp, float Ki, float Kd, v
   cumulative_integral_val += ((time_interval/1000000.0)*error);
   new_output = Kp*(float(error)) + Ki*(cumulative_integral_val) + Kd*((error-past_error)/(time_interval/1000000.0));//core function here
   past_error = error;
-  //Serial.print("new_output");
-  func(double(constrain(new_output, -100, 100))); //relies on linear scaling of rpm to duty cycle, where 0 duty cycle = maxrpm and 510 duty cycle = 0 rpm
+  Serial.print("new_output");
+  Serial.println(new_output);
+  func(constrain(new_output, -100.0, 100.0)); //relies on linear scaling of rpm to duty cycle, where 0 duty cycle = maxrpm and 510 duty cycle = 0 rpm
 }
 //start of our accel functions
-double get_angle(float Y, float Z){
-  double angle = acos(Z/1); //cos inverse Z to get the current angle with respect to the vertical
-  if (Y>0){ //fix this
-    return -1*angle; //return the negative angle
+double get_angle(float X){
+  X = double(constrain(X, -1.0, 1.0));
+  if (abs(X)==1.0){
+    return 0;
   }
-  else{
-    return angle;
-  }
+  double angle = asin(X/1)*(60.0/2*M_PI); //cos inverse Z to get the current angle with respect to the vertical
+  angle = EMA_MULTI*angle + (current_angle*(1-EMA_MULTI));
+  return angle;
 }
 void set_ANGLE(double output_error){
-  if (error>0){ //once again check for correct motor direction
-    current_percent_level += output_error;
-    OCR1A = uint32_t(map(current_percent_level, 0, 100, 510, 0));
-  }
-  else{
-    current_percent_level -= output_error;
-    OCR1A = uint32_t(map(current_percent_level, 0, 100, 510, 0));
-  }
+  Motor_PID(output_error);
 }
 bool is_on_side(double angle){
   if (abs(angle) > 30){
@@ -225,7 +237,7 @@ void Motor_PID(double TARGET){
   PID(get_average_rpm, TARGET, KP, KI, KD, set_PWM); //sending a function pointer into PID
 }
 void Accel_PID(double TARGET){
-  PID(get_angle, 0, KP, KI, KD, set_PWM);
+  PID(get_angle, 0, KP, KI, KD, set_ANGLE);
 }
 void loop() {
   // put your main code here, to run repeatedly:
@@ -234,7 +246,14 @@ void loop() {
   accelX = accelData.accelX;
   accelY = accelData.accelY;
   accelZ = accelData.accelZ;
-  current_angle = get_angle(accelY, accelZ);
+  /*Serial.print(accelData.accelX);
+  Serial.print("\t");
+  Serial.print(accelData.accelY);
+  Serial.print("\t");
+  Serial.print(accelData.accelZ);
+  Serial.print("\t");
+  current_angle = get_angle(accelX);
+  Serial.println(current_angle);*/
   if (Serial.available() > 0){
     char charac = Serial.read();
     if (charac == 'B'){
@@ -246,19 +265,18 @@ void loop() {
       Change_Direction(DIR_PIN);
     }
   }
-  pot_value = map(analogRead(POT_PIN), 0, 1023, 0, 2000); //original rightmost value is 510
+  pot_value = map(analogRead(POT_PIN), 0, 1023, -2000, 2000); //original rightmost value is 510
   //Serial.print("Requested RPM: ");
-  Serial.println(pot_value);
-  Serial.print(",");
+  //Serial.println(pot_value);
+  //Serial.print(",");
   //Serial.print("Current RPM: ");
-  Serial.println(get_average_rpm());
+  //Serial.println(get_average_rpm());
   delay(50);
   //Serial.print("Current pot_value: ");
   //Serial.println(pot_value);
   Motor_PID(pot_value);
-  //Serial.print("RPM:");
-  //Serial.println(get_rpm());
-  //Serial.print("Direction: ");
-  //Serial.println(get_direction());
+  //Accel_PID(0);
+  Serial.print("Direction: ");
+  Serial.println(direction);
   check_validity_timing();
 }
