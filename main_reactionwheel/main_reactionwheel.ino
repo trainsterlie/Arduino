@@ -29,7 +29,7 @@ double current_angle;
 #define CCW 1
 #define PPR 100
 #define EMA_MULTI 0.90
-#define KP 0.01f //motor_pid values are 0.01, 0.006, 0.001
+#define KP 0.012f //motor_pid values are 0.012, 0.006, 0.001, higher P values means less oscillation, idk about the other values
 #define KI 0.006f
 #define KD 0.001f
 #define IMU_ADDRESS 0x68
