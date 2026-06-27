@@ -71,9 +71,10 @@ void setup() {
     delay(5000);
     IMU.init(calib, IMU_ADDRESS);
   #endif
-  //calib.accelBias[0] = 0.03;
-  //calib.accelBias[1] = 0.03;
-  //calib.accelBias[2] = 0.04;
+  calib->accelBias[0] = -0.03; //setting pre known bias values 
+  calib->accelBias[1] = 0.03;
+  calib->accelBias[2] = 0.04;
+  cal->valid = true;
   err = IMU.setGyroRange(500);
   err = IMU.setAccelRange(2);
   if (err != 0) {
