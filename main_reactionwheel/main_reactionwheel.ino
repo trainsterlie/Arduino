@@ -1,9 +1,4 @@
-//main reaction wheel sketch
-//functions to implement
-//Error (PID) (Done)
-//Motor Drive Function(Motor Smoothing), takes in the target rpm and smoothens out the acceleration of the motor until it reaches the target rpm (Done)
-//Brake Function (enable the Brake pin) (Done)
-//Reverse Function (enables/disables the Direction pin) (Done)
+//this code aims to implement the basic functions of a 1-dimensional stabilised reaction wheel.
 #include <Arduino.h>
 #include "FastIMU.h"
 #include <Wire.h>
@@ -71,10 +66,10 @@ void setup() {
     delay(5000);
     IMU.init(calib, IMU_ADDRESS);
   #endif
-  calib->accelBias[0] = -0.03; //setting pre known bias values 
-  calib->accelBias[1] = 0.03;
-  calib->accelBias[2] = 0.04;
-  cal->valid = true;
+  calib.accelBias[0] = -0.03; //setting pre known bias values 
+  calib.accelBias[1] = 0.03;
+  calib.accelBias[2] = 0.04;
+  calib.valid = true;
   err = IMU.setGyroRange(500);
   err = IMU.setAccelRange(2);
   if (err != 0) {
