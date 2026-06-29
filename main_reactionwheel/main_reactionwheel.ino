@@ -3,7 +3,7 @@
 #include "FastIMU.h"
 #include <Wire.h>
 #include <math.h>
-const uint8_t EN_PIN = 5;
+//const uint8_t EN_PIN = 5;
 const uint8_t DIR_PIN = 6;
 const uint8_t PWM_PIN = 9;
 const uint8_t BRAKE_PIN = 7;
@@ -24,10 +24,11 @@ double current_angle;
 #define CCW 1
 #define PPR 100
 #define EMA_MULTI 0.90
-#define KP 0.012f //motor_pid values are 0.012, 0.006, 0.001, higher P values means less oscillation, idk about the other values
-#define KI 0.006f
-#define KD 0.001f
+#define KP 6.0f //motor_pid values are 0.012, 0.006, 0.001, higher P values means less oscillation, idk about the other values
+#define KI 0.06f
+#define KD 0.00f
 #define IMU_ADDRESS 0x68
+#define MPU6050_CONFIG 26
 //#define PERFORM_CALIBRATION 1
 MPU6050 IMU;
 calData calib = {0};
@@ -70,8 +71,11 @@ void setup() {
   calib.accelBias[1] = 0.03;
   calib.accelBias[2] = 0.04;
   calib.valid = true;
+  IMU.init(calib, IMU_ADDRESS);
   err = IMU.setGyroRange(500);
   err = IMU.setAccelRange(2);
+  Wire.write(0x1A);
+  Wire.write(0b00000010);
   if (err != 0) {
   Serial.print("Error setting range: ");
   Serial.println(err);
@@ -92,9 +96,11 @@ void setup() {
   pinMode(ENC_B, INPUT_PULLUP);
   // Clear Timer1 Control Registers
   TCCR1A = 0;
+  TCCR1B = 0;
   // Set Timer1 to Fast PWM mode using ICR1 (Mode 14)
   // Enable PWM on Channel A (Pin 9) and Channel B (Pin 10)
   TCCR1A = (1 << COM1A1) | (1 << COM1B1) | (1 << WGM11);
+  TCCR1B |= (1 << WGM13) | (1 << WGM12) | (1 << CS10);
   // Set the frequency: 16MHz / (Prescaler * Desired_Freq)
   // 16,000,000 / (1 * 20,000) = 800. Subtract 1 because counting starts at 0.
   ICR1 = 799; 
@@ -163,7 +169,7 @@ double get_signed_rpm(void){
 }
 void Brake(uint8_t BRAKE_PIN){ //implement the braking function of the motor
   digitalWrite(BRAKE_PIN, LOW); //setting the brake_pin to high triggers the brake function of the motor
-  //delay(100); //implement delays here to ensure the motor brakes properly
+  //delay(50); //implement delays here to ensure the motor brakes properly
   //check_validity_timing();
   OCR1A = 510;
   digitalWrite(BRAKE_PIN, HIGH);
@@ -186,13 +192,22 @@ void set_PWM(double percent_difference){
   else if (current_percent_level > 0 && commanded_direction != CW){
     Change_Direction(DIR_PIN);
   }
-  OCR1A = uint32_t(map(abs(current_percent_level), 0, 100, 510, 0)); //we set the percent speed here with respect to our identified duty values for 0 and 100% power
+  OCR1A = uint32_t(map(abs(current_percent_level), 0, 100, 799, 0)); //we set the percent speed here with respect to our identified duty values for 0 and 100% power
+}
+void set_linear_PWM(double percent_difference){
+  Serial.print("current percent level: ");
+  Serial.println(current_percent_level);
+  current_percent_level = constrain(percent_difference, -100, 100);
+  if (current_percent_level < 0 && commanded_direction != CCW){
+    Change_Direction(DIR_PIN);
+  }
+  else if (current_percent_level > 0 && commanded_direction != CW){
+    Change_Direction(DIR_PIN);
+  }
+  OCR1A = uint32_t(map(abs(current_percent_level), 0, 100, 799, 0)); //we set the percent speed here with respect to our identified duty values for 0 and 100% power
 }
 void PID(double (*CURRENT)(void), double TARGET, float Kp, float Ki, float Kd, void (*func)(double)){
   double current_val = CURRENT();
-  /*if (commanded_direction == CCW){ //in replacement of this we could just make RPM positive to mark clockwise and negative to mark counter clockwise
-    current_val = current_val*-1.0;
-  }*/
   error = TARGET - current_val;
   //Serial.print("Error: ");
   //Serial.println(error);
@@ -241,7 +256,7 @@ void Motor_PID(double TARGET){
   PID(get_signed_rpm, TARGET, KP, KI, KD, set_PWM); //sending a function pointer into PID
 }
 void Accel_PID(double TARGET){
-  PID(get_angle, 0, KP, KI, KD, set_PWM);
+  PID(get_angle, 0, KP, KI, KD, set_linear_PWM);
 }
 void loop() {
   // put your main code here, to run repeatedly:
@@ -275,11 +290,11 @@ void loop() {
   //Serial.print(",");
   Serial.print("Current RPM: ");
   Serial.println(get_signed_rpm());
-  delay(50);
+  delay(100);
   //Serial.print("Current pot_value: ");
   //Serial.println(pot_value);
-  Motor_PID(pot_value);
-  //Accel_PID(0);
+  //Motor_PID(pot_value);
+  Accel_PID(0);
   //Serial.print("Direction: ");
   //.println(direction);
   check_validity_timing();
