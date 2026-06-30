@@ -24,9 +24,9 @@ double current_angle;
 #define CCW 1
 #define PPR 100
 #define EMA_MULTI 0.90
-#define KP 1.5f //motor_pid values are 0.012, 0.006, 0.001, higher P values means less oscillation, idk about the other values
-#define KI 0.5f
-#define KD 0.00f
+#define KP 1.5f //motor_pid values are 0.012, 0.006, 0.001, higher P values adjust the gain of the adjustment
+#define KI 0.0f //I values integrates past errors over time to eliminate steady state error
+#define KD 0.5f //D values dampens oscillations by calculating rate of change of error
 #define IMU_ADDRESS 0x68
 #define MPU6050_CONFIG 26
 #define PERFORM_CALIBRATION 1
@@ -295,7 +295,6 @@ void loop() {
   Serial.print("\t");
   Serial.print(accelData.accelZ);
   Serial.print("\t");
-  
   Serial.print(gyroData.gyroX);
   Serial.print("\t");
   Serial.print(gyroData.gyroY);
