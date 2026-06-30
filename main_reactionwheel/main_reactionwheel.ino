@@ -79,12 +79,12 @@ void setup() {
   calib.gyroBias[0] = 3.76;
   calib.gyroBias[1] = 5.69;
   calib.gyroBias[2] = -0.33;
-  calib.valid = true;
+  calib.valid = true; //tricking the calib into actually setting these values
   IMU.init(calib, IMU_ADDRESS);
   err = IMU.setGyroRange(500);
   err = IMU.setAccelRange(2);
   Wire.write(0x1A);
-  Wire.write(0b00000110);
+  Wire.write(0b00000110); //setting the LPF to the highest value
   if (err != 0) {
   Serial.print("Error setting range: ");
   Serial.println(err);
@@ -177,30 +177,37 @@ double get_signed_rpm(void){
   }
 }
 void Brake(uint8_t BRAKE_PIN){ //implement the braking function of the motor
-  digitalWrite(BRAKE_PIN, LOW); //setting the brake_pin to high triggers the brake function of the motor
+  digitalWrite(BRAKE_PIN, LOW); //setting the brake_pin to LOW triggers the brake function of the motor
   //delay(50); //implement delays here to ensure the motor brakes properly
-  //check_validity_timing();
-  OCR1A = 510;
+  OCR1A = 799;
   digitalWrite(BRAKE_PIN, HIGH);
-  delay(50); //then another delay to ensure we have some time
 }
 void Change_Direction(uint8_t DIR_PIN){ //change direction of the motor
-  Brake(BRAKE_PIN); //trigger the brake_pin to safely change directions
+  //Brake(BRAKE_PIN); //trigger the brake_pin to safely change directions
+  if (!check_slow_rpm(200)){
+    OCR1A = 799;
+  }
   commanded_direction = !commanded_direction;
   digitalWrite(DIR_PIN, commanded_direction); //make sure to change this to the correct movement
   //delay(50); //delay to ensure safety
+}
+bool check_slow_rpm(int limit){
+  if (get_average_rpm() < limit){
+    return true;
+  }
+  return false;
 }
 void set_PWM(double percent_difference){
   Serial.print("current percent level: ");
   Serial.println(current_percent_level);
   current_percent_level += percent_difference;
-  current_percent_level = constrain(current_percent_level, -100, 100);
   if (current_percent_level < 0 && commanded_direction != CW){
-    Change_Direction(DIR_PIN);
+      Change_Direction(DIR_PIN);
   }
   else if (current_percent_level > 0 && commanded_direction != CCW){
-    Change_Direction(DIR_PIN);
+      Change_Direction(DIR_PIN);
   }
+  current_percent_level = constrain(current_percent_level, -100, 100);
   OCR1A = uint32_t(map(abs(current_percent_level), 0, 100, 799, 0)); //we set the percent speed here with respect to our identified duty values for 0 and 100% power
 }
 void set_linear_PWM(double percent_difference){
@@ -215,6 +222,7 @@ void set_linear_PWM(double percent_difference){
   }
   OCR1A = uint32_t(map(abs(current_percent_level), 0, 100, 799, 0)); //we set the percent speed here with respect to our identified duty values for 0 and 100% power
 }
+
 void PID(double (*CURRENT)(void), double TARGET, float Kp, float Ki, float Kd, void (*func)(double)){
   double current_val = CURRENT();
   error = TARGET - current_val;
@@ -268,7 +276,7 @@ void Motor_PID(double TARGET){
   PID(get_signed_rpm, TARGET, KP, KI, KD, set_PWM); //sending a function pointer into PID
 }
 void Accel_PID(double TARGET){
-  PID(get_angle, 0, KP, KI, KD, set_linear_PWM);
+  PID(get_angle, 0, KP, KI, KD, set_PWM);
 }
 void loop() {
   // put your main code here, to run repeatedly:
