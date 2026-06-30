@@ -16,7 +16,7 @@ volatile uint32_t current_time;
 double RPM, error, past_error, new_output, pot_value, cumulative_integral_val = 0;
 double current_percent_level = 0;
 uint32_t time_elapsed = 0, time_interval;
-float accelX, accelY, accelZ;
+float accelX, accelY, accelZ, gyroX, gyroY, gyroZ;
 double current_angle;
 #define A 0
 #define B 1
@@ -24,12 +24,12 @@ double current_angle;
 #define CCW 1
 #define PPR 100
 #define EMA_MULTI 0.90
-#define KP 6.0f //motor_pid values are 0.012, 0.006, 0.001, higher P values means less oscillation, idk about the other values
-#define KI 0.06f
+#define KP 1.5f //motor_pid values are 0.012, 0.006, 0.001, higher P values means less oscillation, idk about the other values
+#define KI 0.5f
 #define KD 0.00f
 #define IMU_ADDRESS 0x68
 #define MPU6050_CONFIG 26
-//#define PERFORM_CALIBRATION 1
+#define PERFORM_CALIBRATION 1
 MPU6050 IMU;
 calData calib = {0};
 AccelData accelData;
@@ -64,18 +64,27 @@ void setup() {
     Serial.print(calib.accelBias[1]);
     Serial.print(", ");
     Serial.println(calib.accelBias[2]);
-    delay(5000);
+    Serial.println("Gyro biases X/Y/Z: ");
+    Serial.print(calib.gyroBias[0]);
+    Serial.print(", ");
+    Serial.print(calib.gyroBias[1]);
+    Serial.print(", ");
+    Serial.print(calib.gyroBias[2]);
+    delay(3000);
     IMU.init(calib, IMU_ADDRESS);
   #endif
   calib.accelBias[0] = -0.03; //setting pre known bias values 
   calib.accelBias[1] = 0.03;
   calib.accelBias[2] = 0.04;
+  calib.gyroBias[0] = 3.76;
+  calib.gyroBias[1] = 5.69;
+  calib.gyroBias[2] = -0.33;
   calib.valid = true;
   IMU.init(calib, IMU_ADDRESS);
   err = IMU.setGyroRange(500);
   err = IMU.setAccelRange(2);
   Wire.write(0x1A);
-  Wire.write(0b00000010);
+  Wire.write(0b00000110);
   if (err != 0) {
   Serial.print("Error setting range: ");
   Serial.println(err);
@@ -186,10 +195,10 @@ void set_PWM(double percent_difference){
   Serial.println(current_percent_level);
   current_percent_level += percent_difference;
   current_percent_level = constrain(current_percent_level, -100, 100);
-  if (current_percent_level < 0 && commanded_direction != CCW){
+  if (current_percent_level < 0 && commanded_direction != CW){
     Change_Direction(DIR_PIN);
   }
-  else if (current_percent_level > 0 && commanded_direction != CW){
+  else if (current_percent_level > 0 && commanded_direction != CCW){
     Change_Direction(DIR_PIN);
   }
   OCR1A = uint32_t(map(abs(current_percent_level), 0, 100, 799, 0)); //we set the percent speed here with respect to our identified duty values for 0 and 100% power
@@ -198,10 +207,10 @@ void set_linear_PWM(double percent_difference){
   Serial.print("current percent level: ");
   Serial.println(current_percent_level);
   current_percent_level = constrain(percent_difference, -100, 100);
-  if (current_percent_level < 0 && commanded_direction != CCW){
+  if (current_percent_level < 0 && commanded_direction != CW){
     Change_Direction(DIR_PIN);
   }
-  else if (current_percent_level > 0 && commanded_direction != CW){
+  else if (current_percent_level > 0 && commanded_direction != CCW){
     Change_Direction(DIR_PIN);
   }
   OCR1A = uint32_t(map(abs(current_percent_level), 0, 100, 799, 0)); //we set the percent speed here with respect to our identified duty values for 0 and 100% power
@@ -221,15 +230,18 @@ void PID(double (*CURRENT)(void), double TARGET, float Kp, float Ki, float Kd, v
   func(constrain(new_output, -100.0, 100.0)); //relies on linear scaling of rpm to duty cycle, where 0 duty cycle = maxrpm and 510 duty cycle = 0 rpm
 }
 //start of our accel functions
-double get_angle(float X){
-  X = double(constrain(X, -1.0, 1.0));
-  if (abs(X)==1.0){
-    return 0;
-  }
-  double angle = asin(X/1)*(60.0/2*M_PI); //cos inverse Z to get the current angle with respect to the vertical
-  angle = EMA_MULTI*angle + (current_angle*(1-EMA_MULTI));
+double complementary_filter(float accelX, float accelZ, float gyroX){
+  double accel_angle;
+  accel_angle = atan2(accelX, -1*accelZ)*(180/PI);
+  double angle = 0.98 * (current_angle + gyroX*(time_interval/1000000.0)) + 0.02*accel_angle;
   return angle;
 }
+double get_angle(void){
+  double angle = complementary_filter(accelX, accelZ, gyroX);
+  current_angle = angle;
+  return angle;
+}
+
 void set_ANGLE(double output_error){
   Motor_PID(output_error);
 }
@@ -262,16 +274,27 @@ void loop() {
   // put your main code here, to run repeatedly:
   IMU.update();
   IMU.getAccel(&accelData);
+  IMU.getGyro(&gyroData);
   accelX = accelData.accelX;
   accelY = accelData.accelY;
   accelZ = accelData.accelZ;
+  gyroX = gyroData.gyroX;
+  gyroY = gyroData.gyroY;
+  gyroZ = gyroData.gyroZ;
   Serial.print(accelData.accelX);
   Serial.print("\t");
   Serial.print(accelData.accelY);
   Serial.print("\t");
   Serial.print(accelData.accelZ);
   Serial.print("\t");
-  current_angle = get_angle(accelX);
+  
+  Serial.print(gyroData.gyroX);
+  Serial.print("\t");
+  Serial.print(gyroData.gyroY);
+  Serial.print("\t");
+  Serial.print(gyroData.gyroZ);
+  Serial.println("");
+  current_angle = get_angle();
   Serial.println(current_angle);
   if (Serial.available() > 0){
     char charac = Serial.read();
@@ -290,7 +313,7 @@ void loop() {
   //Serial.print(",");
   Serial.print("Current RPM: ");
   Serial.println(get_signed_rpm());
-  delay(100);
+  delay(50);
   //Serial.print("Current pot_value: ");
   //Serial.println(pot_value);
   //Motor_PID(pot_value);
