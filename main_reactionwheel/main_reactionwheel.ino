@@ -22,7 +22,7 @@ double current_angle = 0, gyro_time_interval = 0, gyro_time_elapsed = 0;
 #define CW 0
 #define CCW 1
 #define PPR 100
-#define EMA_MULTI 0.90
+#define EMA_MULTI 0.60
 #define KP 1.8f //motor_pid values are 0.012, 0.006, 0.001, higher P values adjust the gain of the adjustment
 #define KI 0.05f //I values integrates past errors over time to eliminate steady state error
 #define KD 0.2f //D values dampens oscillations by calculating rate of change of error
@@ -194,19 +194,17 @@ void Change_Direction(uint8_t DIR_PIN){ //change direction of the motor
   digitalWrite(DIR_PIN, commanded_direction); //make sure to change this to the correct movement
 } 
 void set_PWM(double percent_difference){
-  //Serial.print("current percent level: ");
-  //Serial.println(current_percent_level);
   current_percent_level += percent_difference;
   current_percent_level = constrain(current_percent_level, -100, 100);  
-  bool slow_enough = check_slow_rpm(400);
+  bool slow_enough = check_slow_rpm(700);
   if (current_percent_level > 0 && commanded_direction != CCW){
     if (!slow_enough){
-      OCR1A = 799;
+      OCR1A = 799; //test if 750 makes it decelerate faster
       return; //return function here makes it exit back to the main loop, so we dont block the main loop from occurring
     }
     else{
     Change_Direction(DIR_PIN);
-    current_percent_level = 0;
+    current_percent_level = 25.0;
     }
   }
   else if (current_percent_level < 0 && commanded_direction != CW){
@@ -283,9 +281,15 @@ void Jump(double angle){
 }
 
 void Motor_PID(double TARGET){
+  
   PID(get_signed_rpm, TARGET, KP, KI, KD, set_PWM); //sending a function pointer into PID
 }
 void Accel_PID(double TARGET){
+  double curr_ang = get_angle()
+  if (abs(curr_ang) < 0.5){ //if current angle is less than 0.5, theres no need to 
+    OCR1A = 799; //coasting
+    return;
+  }
   PID(get_angle, 0, KP, KI, KD, set_PWM);
 }
 void loop() {
