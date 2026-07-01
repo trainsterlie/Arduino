@@ -3,7 +3,6 @@
 #include "FastIMU.h"
 #include <Wire.h>
 #include <math.h>
-//const uint8_t EN_PIN = 5;
 const uint8_t DIR_PIN = 6;
 const uint8_t PWM_PIN = 9;
 const uint8_t BRAKE_PIN = 7;
@@ -15,21 +14,21 @@ volatile uint8_t counter;
 volatile uint32_t current_time;
 double RPM, error, past_error, new_output, pot_value, cumulative_integral_val = 0;
 double current_percent_level = 0;
-uint32_t time_elapsed = 0, time_interval;
+uint32_t time_elapsed = 0, neg_frames = 0, pos_frames = 0, current_duty_value = 0, last_print_time = 0;
 float accelX, accelY, accelZ, gyroX, gyroY, gyroZ;
-double current_angle;
+double current_angle = 0, gyro_time_interval = 0, gyro_time_elapsed = 0;
 #define A 0
 #define B 1
 #define CW 0
 #define CCW 1
 #define PPR 100
 #define EMA_MULTI 0.90
-#define KP 1.5f //motor_pid values are 0.012, 0.006, 0.001, higher P values adjust the gain of the adjustment
-#define KI 0.0f //I values integrates past errors over time to eliminate steady state error
-#define KD 0.5f //D values dampens oscillations by calculating rate of change of error
+#define KP 1.8f //motor_pid values are 0.012, 0.006, 0.001, higher P values adjust the gain of the adjustment
+#define KI 0.05f //I values integrates past errors over time to eliminate steady state error
+#define KD 0.2f //D values dampens oscillations by calculating rate of change of error
 #define IMU_ADDRESS 0x68
 #define MPU6050_CONFIG 26
-#define PERFORM_CALIBRATION 1
+//#define PERFORM_CALIBRATION 1
 MPU6050 IMU;
 calData calib = {0};
 AccelData accelData;
@@ -73,18 +72,18 @@ void setup() {
     delay(3000);
     IMU.init(calib, IMU_ADDRESS);
   #endif
-  calib.accelBias[0] = -0.03; //setting pre known bias values 
-  calib.accelBias[1] = 0.03;
-  calib.accelBias[2] = 0.04;
-  calib.gyroBias[0] = 3.76;
-  calib.gyroBias[1] = 5.69;
+  calib.accelBias[0] = 0.06; //setting pre known bias values 
+  calib.accelBias[1] = 0.05;
+  calib.accelBias[2] = 0.02;
+  calib.gyroBias[0] = 3.94;
+  calib.gyroBias[1] = 5.67;
   calib.gyroBias[2] = -0.33;
   calib.valid = true; //tricking the calib into actually setting these values
   IMU.init(calib, IMU_ADDRESS);
   err = IMU.setGyroRange(500);
   err = IMU.setAccelRange(2);
   Wire.write(0x1A);
-  Wire.write(0b00000110); //setting the LPF to the highest value
+  Wire.write(0x06); //setting the LPF to the highest value
   if (err != 0) {
   Serial.print("Error setting range: ");
   Serial.println(err);
@@ -114,9 +113,9 @@ void setup() {
   // 16,000,000 / (1 * 20,000) = 800. Subtract 1 because counting starts at 0.
   ICR1 = 799; 
   // Set Duty Cycle for Pin 9 (between 0 and 799)
-  OCR1A = 400; // 50% duty cycle
+  OCR1A = 799; // 50% duty cycle
   digitalWrite(BRAKE_PIN, HIGH); //sending HIGH to our BRAKE_PIN disables the brake
-  digitalWrite(DIR_PIN, commanded_direction); //set our direction first here to the DIR_PIN, we start off with CCW
+  digitalWrite(DIR_PIN, commanded_direction); //set our direction first here to the DIR_PIN, we start off with CW
   attachInterrupt(digitalPinToInterrupt(ENC_A), PulseInterruptA, CHANGE); //attach interrupts to both encoder feedback wires
   attachInterrupt(digitalPinToInterrupt(ENC_B), PulseInterruptB, CHANGE);
   FDBK_A.elapsed_time = millis();
@@ -149,9 +148,9 @@ uint8_t get_direction(struct container A_Wire){ //simply returns direction of th
 uint32_t calculate_rpm(volatile uint32_t time_between_pulses){  //time_between_pulses is in microseconds
   if (!time_between_pulses) //if time between pulses is 0, we return a rpm of 0
     return 0;
-  return uint32_t(600000/(time_between_pulses)); //time taken for 1 revolution in microseconds
+  return uint32_t(600000UL/(time_between_pulses)); //time taken for 1 revolution in microseconds
 }
-double expo_moving_average(uint32_t prev, uint32_t current, float multiplier){ //using the formula for exponential moving average to smoothen out the values
+double expo_moving_average(double prev, double current, float multiplier){ //using the formula for exponential moving average to smoothen out the values
   return double(multiplier*current + (prev*(1-multiplier))); //large multiplier value to smoothen out more (more lag)
 }
 void check_validity_timing(void){ //this helper function is to check if rpm has gone to 0 (eg sudden stop)
@@ -161,7 +160,7 @@ void check_validity_timing(void){ //this helper function is to check if rpm has 
   }
 }
 double get_average_rpm(void){ //function here to get the current RPM through using exponenential moving average to smoothen out the RPM readings. You can use a higher EMA_MULTIPLIER value to smoothen out the readings even more at the cost of reaction time
-  double new_rpm = expo_moving_average((calculate_rpm(FDBK_A.timing*2) + calculate_rpm(FDBK_B.timing*2))/2, RPM, EMA_MULTI); //we get the average of RPM readings from both A and B encoder values and consequently use the expo_moving_average formula to smoothen out the rpm values
+  double new_rpm = expo_moving_average(double(calculate_rpm(FDBK_A.timing*2) + calculate_rpm(FDBK_B.timing*2))/2, RPM, EMA_MULTI); //we get the average of RPM readings from both A and B encoder values and consequently use the expo_moving_average formula to smoothen out the rpm values
   if (new_rpm > 9999) //occasionally at the start of the program the rpm will exceed a very high value, to avoid this we tentatively include a impossible placeholder 
     return RPM;
   RPM = new_rpm;
@@ -182,37 +181,50 @@ void Brake(uint8_t BRAKE_PIN){ //implement the braking function of the motor
   OCR1A = 799;
   digitalWrite(BRAKE_PIN, HIGH);
 }
-void Change_Direction(uint8_t DIR_PIN){ //change direction of the motor
-  //Brake(BRAKE_PIN); //trigger the brake_pin to safely change directions
-  if (!check_slow_rpm(200)){
-    OCR1A = 799;
-  }
-  commanded_direction = !commanded_direction;
-  digitalWrite(DIR_PIN, commanded_direction); //make sure to change this to the correct movement
-  //delay(50); //delay to ensure safety
-}
 bool check_slow_rpm(int limit){
   if (get_average_rpm() < limit){
     return true;
   }
   return false;
 }
+void Change_Direction(uint8_t DIR_PIN){ //change direction of the motor
+  //Brake(BRAKE_PIN); //trigger the brake_pin to safely change directions
+  Brake(BRAKE_PIN);
+  commanded_direction = !commanded_direction;
+  digitalWrite(DIR_PIN, commanded_direction); //make sure to change this to the correct movement
+} 
 void set_PWM(double percent_difference){
-  Serial.print("current percent level: ");
-  Serial.println(current_percent_level);
+  //Serial.print("current percent level: ");
+  //Serial.println(current_percent_level);
   current_percent_level += percent_difference;
-  if (current_percent_level < 0 && commanded_direction != CW){
-      Change_Direction(DIR_PIN);
+  current_percent_level = constrain(current_percent_level, -100, 100);  
+  bool slow_enough = check_slow_rpm(400);
+  if (current_percent_level > 0 && commanded_direction != CCW){
+    if (!slow_enough){
+      OCR1A = 799;
+      return; //return function here makes it exit back to the main loop, so we dont block the main loop from occurring
+    }
+    else{
+    Change_Direction(DIR_PIN);
+    current_percent_level = 0;
+    }
   }
-  else if (current_percent_level > 0 && commanded_direction != CCW){
-      Change_Direction(DIR_PIN);
+  else if (current_percent_level < 0 && commanded_direction != CW){
+    if (!slow_enough){
+      OCR1A = 799;
+      return;
+    }
+    else{
+    Change_Direction(DIR_PIN);
+    current_percent_level = 0;
+    }
+
   }
-  current_percent_level = constrain(current_percent_level, -100, 100);
-  OCR1A = uint32_t(map(abs(current_percent_level), 0, 100, 799, 0)); //we set the percent speed here with respect to our identified duty values for 0 and 100% power
+  OCR1A = uint32_t(map(abs(current_percent_level), 0, 100, 799, 0));; //we set the percent speed here with respect to our identified duty values for 0 and 100% power
 }
 void set_linear_PWM(double percent_difference){
-  Serial.print("current percent level: ");
-  Serial.println(current_percent_level);
+  //Serial.print("current percent level: ");
+  //Serial.println(current_percent_level);
   current_percent_level = constrain(percent_difference, -100, 100);
   if (current_percent_level < 0 && commanded_direction != CW){
     Change_Direction(DIR_PIN);
@@ -224,35 +236,33 @@ void set_linear_PWM(double percent_difference){
 }
 
 void PID(double (*CURRENT)(void), double TARGET, float Kp, float Ki, float Kd, void (*func)(double)){
+  double time_interval = micros()-time_elapsed;  
+  double Kd_term = 0;
   double current_val = CURRENT();
   error = TARGET - current_val;
-  //Serial.print("Error: ");
-  //Serial.println(error);
-  time_interval = micros()-time_elapsed;  
   time_elapsed = micros();
   cumulative_integral_val += ((time_interval/1000000.0)*error);
-  new_output = Kp*(float(error)) + Ki*(cumulative_integral_val) + Kd*((error-past_error)/(time_interval/1000000.0));//core function here
+  if (time_interval > 0){
+    Kd_term = Kd*((error-past_error)/(time_interval/1000000.0));
+  }
+  new_output = Kp*(float(error)) + Ki*(cumulative_integral_val) + Kd_term;//core function here
   past_error = error;
-  Serial.print("new_output");
-  Serial.println(new_output);
   func(constrain(new_output, -100.0, 100.0)); //relies on linear scaling of rpm to duty cycle, where 0 duty cycle = maxrpm and 510 duty cycle = 0 rpm
 }
 //start of our accel functions
 double complementary_filter(float accelX, float accelZ, float gyroX){
   double accel_angle;
   accel_angle = atan2(accelX, -1*accelZ)*(180/PI);
-  double angle = 0.98 * (current_angle + gyroX*(time_interval/1000000.0)) + 0.02*accel_angle;
+  double angle = 0.98 * (current_angle + gyroX*(gyro_time_interval/1000000.0)) + 0.02*accel_angle;
   return angle;
 }
 double get_angle(void){
   double angle = complementary_filter(accelX, accelZ, gyroX);
+  angle = expo_moving_average(current_angle, angle, EMA_MULTI);
   current_angle = angle;
   return angle;
 }
 
-void set_ANGLE(double output_error){
-  Motor_PID(output_error);
-}
 bool is_on_side(double angle){
   if (abs(angle) > 30){
     return true;
@@ -281,6 +291,8 @@ void Accel_PID(double TARGET){
 void loop() {
   // put your main code here, to run repeatedly:
   IMU.update();
+  gyro_time_interval = micros()-gyro_time_elapsed;
+  gyro_time_elapsed = micros();
   IMU.getAccel(&accelData);
   IMU.getGyro(&gyroData);
   accelX = accelData.accelX;
@@ -289,7 +301,23 @@ void loop() {
   gyroX = gyroData.gyroX;
   gyroY = gyroData.gyroY;
   gyroZ = gyroData.gyroZ;
-  Serial.print(accelData.accelX);
+  if ((millis()-last_print_time) > 1000){
+    Serial.println(current_angle);
+    Serial.print(accelData.accelX);
+  Serial.print("\t");
+  Serial.print(accelData.accelY);
+  Serial.print("\t");
+  Serial.print(accelData.accelZ);
+  Serial.print("\t");
+  Serial.print(gyroData.gyroX);
+  Serial.print("\t");
+  Serial.print(gyroData.gyroY);
+  Serial.print("\t");
+  Serial.print(gyroData.gyroZ);
+  Serial.println("");
+    last_print_time = millis();
+  }
+  /*Serial.print(accelData.accelX);
   Serial.print("\t");
   Serial.print(accelData.accelY);
   Serial.print("\t");
@@ -302,30 +330,19 @@ void loop() {
   Serial.print(gyroData.gyroZ);
   Serial.println("");
   current_angle = get_angle();
-  Serial.println(current_angle);
-  if (Serial.available() > 0){
-    char charac = Serial.read();
-    if (charac == 'B'){
-      Serial.println("Braking");
-      Brake(BRAKE_PIN);
-    }
-    else if (charac == 'R'){
-      Serial.println("Reversing");
-      Change_Direction(DIR_PIN);
-    }
-  }
-  pot_value = map(analogRead(POT_PIN), 0, 1023, -2000, 2000); //original rightmost value is 510
-  Serial.print("Requested RPM: ");
-  Serial.println(pot_value);
+  
+  //pot_value = map(analogRead(POT_PIN), 0, 1023, -2000, 2000); //original rightmost value is 510
+  //Serial.print("Requested RPM: ");
+  //Serial.println(pot_value);
   //Serial.print(",");
   Serial.print("Current RPM: ");
   Serial.println(get_signed_rpm());
-  delay(50);
+  //delay(50);
   //Serial.print("Current pot_value: ");
-  //Serial.println(pot_value);
+  //Serial.println(pot_value);*/
   //Motor_PID(pot_value);
   Accel_PID(0);
   //Serial.print("Direction: ");
-  //.println(direction);
+  //println(direction);
   check_validity_timing();
 }
