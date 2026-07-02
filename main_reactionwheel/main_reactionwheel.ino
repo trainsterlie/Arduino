@@ -23,9 +23,9 @@ double current_angle = 0, gyro_time_interval = 0, gyro_time_elapsed = 0;
 #define CCW 1
 #define PPR 100
 #define EMA_MULTI 0.60
-#define KP 1.8f //motor_pid values are 0.012, 0.006, 0.001, higher P values adjust the gain of the adjustment
-#define KI 0.05f //I values integrates past errors over time to eliminate steady state error
-#define KD 0.2f //D values dampens oscillations by calculating rate of change of error
+#define KP 0.012f //motor_pid values are 0.012, 0.006, 0.001, higher P values adjust the gain of the adjustment
+#define KI 0.00f //I values integrates past errors over time to eliminate steady state error
+#define KD 0.00f //D values dampens oscillations by calculating rate of change of error
 #define IMU_ADDRESS 0x68
 #define MPU6050_CONFIG 26
 //#define PERFORM_CALIBRATION 1
@@ -168,7 +168,7 @@ double get_average_rpm(void){ //function here to get the current RPM through usi
 }
 double get_signed_rpm(void){
   double averaged = get_average_rpm();
-  if (commanded_direction){
+  if (!commanded_direction){
     return -1*averaged;
   }
   else{
@@ -178,7 +178,7 @@ double get_signed_rpm(void){
 void Brake(uint8_t BRAKE_PIN){ //implement the braking function of the motor
   digitalWrite(BRAKE_PIN, LOW); //setting the brake_pin to LOW triggers the brake function of the motor
   //delay(50); //implement delays here to ensure the motor brakes properly
-  OCR1A = 799;
+  //OCR1A = 799;
   digitalWrite(BRAKE_PIN, HIGH);
 }
 bool check_slow_rpm(int limit){
@@ -196,25 +196,27 @@ void Change_Direction(uint8_t DIR_PIN){ //change direction of the motor
 void set_PWM(double percent_difference){
   current_percent_level += percent_difference;
   current_percent_level = constrain(current_percent_level, -100, 100);  
-  bool slow_enough = check_slow_rpm(700);
+  bool slow_enough = check_slow_rpm(300);
   if (current_percent_level > 0 && commanded_direction != CCW){
     if (!slow_enough){
-      OCR1A = 799; //test if 750 makes it decelerate faster
+      Brake(BRAKE_PIN);
+      //OCR1A = 750; //test if 750 makes it decelerate faster
       return; //return function here makes it exit back to the main loop, so we dont block the main loop from occurring
     }
     else{
     Change_Direction(DIR_PIN);
-    current_percent_level = 25.0;
+    current_percent_level = 0.0;
     }
   }
   else if (current_percent_level < 0 && commanded_direction != CW){
     if (!slow_enough){
-      OCR1A = 799;
+      Brake(BRAKE_PIN);
+      //OCR1A = 750;
       return;
     }
     else{
     Change_Direction(DIR_PIN);
-    current_percent_level = 0;
+    current_percent_level = 0.0;
     }
 
   }
@@ -234,7 +236,7 @@ void set_linear_PWM(double percent_difference){
 }
 
 void PID(double (*CURRENT)(void), double TARGET, float Kp, float Ki, float Kd, void (*func)(double)){
-  double time_interval = micros()-time_elapsed;  
+  double time_interval = micros()-double(time_elapsed);  
   double Kd_term = 0;
   double current_val = CURRENT();
   error = TARGET - current_val;
@@ -281,11 +283,10 @@ void Jump(double angle){
 }
 
 void Motor_PID(double TARGET){
-  
   PID(get_signed_rpm, TARGET, KP, KI, KD, set_PWM); //sending a function pointer into PID
 }
 void Accel_PID(double TARGET){
-  double curr_ang = get_angle()
+  double curr_ang = get_angle();
   if (abs(curr_ang) < 0.5){ //if current angle is less than 0.5, theres no need to 
     OCR1A = 799; //coasting
     return;
@@ -305,21 +306,16 @@ void loop() {
   gyroX = gyroData.gyroX;
   gyroY = gyroData.gyroY;
   gyroZ = gyroData.gyroZ;
-  if ((millis()-last_print_time) > 1000){
-    Serial.println(current_angle);
-    Serial.print(accelData.accelX);
-  Serial.print("\t");
-  Serial.print(accelData.accelY);
-  Serial.print("\t");
-  Serial.print(accelData.accelZ);
-  Serial.print("\t");
-  Serial.print(gyroData.gyroX);
-  Serial.print("\t");
-  Serial.print(gyroData.gyroY);
-  Serial.print("\t");
-  Serial.print(gyroData.gyroZ);
-  Serial.println("");
-    last_print_time = millis();
+  pot_value = double(map(analogRead(POT_PIN), 0, 1023, -2000, 2000)); //original rightmost value is 510
+  if ((millis()-last_print_time) > 500){
+    Serial.println(new_output);
+    Serial.print("Requested RPM: ");
+    Serial.println(pot_value);
+    Serial.print("Current RPM: ");
+    Serial.println(get_signed_rpm());
+    Serial.print("Current Percent Level");
+    Serial.println(current_percent_level);
+      last_print_time = millis();
   }
   /*Serial.print(accelData.accelX);
   Serial.print("\t");
@@ -334,18 +330,24 @@ void loop() {
   Serial.print(gyroData.gyroZ);
   Serial.println("");
   current_angle = get_angle();
+  Serial.println(current_angle);
+    Serial.print(accelData.accelX);
+    Serial.print("\t");
+    Serial.print(accelData.accelY);
+    Serial.print("\t");
+    Serial.print(accelData.accelZ);
+    Serial.print("\t");
+    Serial.print(gyroData.gyroX);
+    Serial.print("\t");
+    Serial.print(gyroData.gyroY);
+    Serial.print("\t");
+    Serial.print(gyroData.gyroZ);
+    Serial.println("");
   
-  //pot_value = map(analogRead(POT_PIN), 0, 1023, -2000, 2000); //original rightmost value is 510
-  //Serial.print("Requested RPM: ");
-  //Serial.println(pot_value);
-  //Serial.print(",");
-  Serial.print("Current RPM: ");
-  Serial.println(get_signed_rpm());
-  //delay(50);
-  //Serial.print("Current pot_value: ");
-  //Serial.println(pot_value);*/
-  //Motor_PID(pot_value);
-  Accel_PID(0);
+  
+  */
+  Motor_PID(pot_value);
+  //Accel_PID(0);
   //Serial.print("Direction: ");
   //println(direction);
   check_validity_timing();
